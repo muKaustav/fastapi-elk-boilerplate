@@ -1,0 +1,101 @@
+version: '3.8'
+
+services:
+  zookeeper:
+    image: bitnami/zookeeper:latest
+    ports:
+      - 2181:2181
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes
+    networks:
+      - elk-network
+
+  kafka:
+    image: bitnami/kafka:latest
+    ports:
+      - 9092:9092
+    environment:
+      - KAFKA_BROKER_ID=1
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,CLIENT:PLAINTEXT
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CLIENT://:9093
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092,CLIENT://kafka:9093
+      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
+      - ALLOW_PLAINTEXT_LISTENER=yes
+      - KAFKA_LOG_DIRS=/bitnami/kafka/data
+      - KAFKA_LOG4J_LOGGERS=kafka:INFO,org.apache.kafka:INFO
+    depends_on:
+      - zookeeper
+    networks:
+      - elk-network
+
+  producer:
+    build:
+      context: ./producer
+      dockerfile: Dockerfile
+    command: uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+    ports:
+      - 4000:8000
+    volumes:
+      - ./producer:/app
+    environment:
+      - KAFKA_HOST=kafka
+      - KAFKA_PORT=9092
+      - KAFKA_TOPIC=logs
+    depends_on:
+      - kafka
+      - zookeeper
+    networks:
+      - elk-network
+
+  elasticsearch:
+    image: bitnami/elasticsearch:7
+    container_name: elasticsearch
+    ports:
+      - '9200:9200'
+    environment:
+      - ELASTICSEARCH_ADVERTISED_HOSTNAME=elasticsearch
+      - ELASTICSEARCH_ADVERTISED_PORT_NUMBER=9200
+      - ELASTICSEARCH_ALLOW_REMOTE_CONNECTIONS=yes
+    networks:
+      - elk-network
+
+  kibana:
+    image: bitnami/kibana:7
+    container_name: kibana
+    ports:
+      - '5601:5601'
+    environment:
+      - KIBANA_ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - ALLOW_PLAINTEXT_LISTENER=yes
+    networks:
+      - elk-network
+
+  logstash:
+    image: logstash:8.11.3
+    container_name: logstash
+    ports:
+      - '5000:5000'
+    volumes:
+      - ./logstash/config:/usr/share/logstash/pipeline
+    environment:
+      - LS_JAVA_OPTS=-Xmx256m -Xms256m
+      - ELASTICSEARCH_HOST=elasticsearch
+      - ELASTICSEARCH_PORT=9200
+      - LOGS_ENABLED=true
+    networks:
+      - elk-network
+
+  kafka-manager:
+    image: hlebalbau/kafka-manager:latest
+    container_name: kafka-manager
+    ports:
+      - '9000:9000'
+    environment:
+      - ZK_HOSTS=zookeeper:2181
+    networks:
+      - elk-network
+
+networks:
+  elk-network:
+    driver: bridge
